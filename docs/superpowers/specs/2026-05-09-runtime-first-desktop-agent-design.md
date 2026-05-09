@@ -1,56 +1,56 @@
-# Runtime-First Desktop Agent Design
+# Runtime-First 桌面智能体设计
 
-Status: approved direction, design spec for review
-Date: 2026-05-09
-Project: claude-code-desktop
+状态：方向已确认，等待用户审阅
+日期：2026-05-09
+项目：claude-code-desktop
 
-## Background
+## 背景
 
-The project has been reset to an empty baseline. The old CLI-oriented implementation and related branches were removed because they were influencing the redesign too heavily.
+项目已经重置为空项目基线。旧的 CLI 架构和相关分支已经清理，因为旧内容会干扰这次重构。
 
-The new product should be a real desktop software system, not a visual wrapper around a CLI. It must support multiple model providers, config-file based API key loading, in-app model switching, a future multi-agent runtime where each agent can use a different model, and an interface that lets other local software control it.
+新项目要做成真正的软件，而不是 CLI 的可视化外壳。它需要支持多模型、多供应商、配置文件读取 API key、软件内切换模型、未来多个智能体同时运行且模型可以不同，并且要给其他本地软件留下控制接口。
 
-The central design decision is:
+本设计的核心判断是：
 
-> Build a local Agent Runtime first. The desktop UI is the official client of that runtime, not the runtime itself.
+> 先做本地 Agent Runtime。桌面 UI 是 Runtime 的官方客户端，而不是 Runtime 本身。
 
-## Goals
+## 目标
 
-1. Build a desktop application that can run independently of any underlying CLI tool.
-2. Keep the core agent orchestration in a local runtime service with explicit APIs.
-3. Support multiple model providers through a unified provider abstraction.
-4. Load API keys and provider settings from TOML config files, with Codex-style config compatibility.
-5. Let users switch models directly inside the software.
-6. Prepare the runtime for multiple concurrent agents, where each agent can use a different model profile.
-7. Expose a local control interface so other software can create sessions, start tasks, observe progress, switch models, and cancel work.
-8. Keep secret handling, external control, and high-risk tool execution behind explicit security boundaries.
+1. 做一个不依赖底层 CLI 的桌面应用。
+2. 把智能体编排放在本地 Runtime 服务中，并通过清晰 API 暴露能力。
+3. 通过统一 Provider 抽象兼容不同模型供应商。
+4. 使用 TOML 配置文件读取 API key 和模型配置，并兼容 Codex 风格配置。
+5. 支持用户在软件内直接切换模型。
+6. 为未来多智能体运行打好基础，每个智能体可以绑定不同模型档位。
+7. 暴露本地控制接口，让其他软件可以创建会话、启动任务、观察进度、切换模型、取消任务。
+8. 对密钥、外部控制、高风险工具调用建立明确安全边界。
 
-## Non-Goals
+## 非目标
 
-1. Do not rebuild the old CLI-based architecture.
-2. Do not make the first version depend on Claude Code, Codex CLI, or any other external CLI as the core execution engine.
-3. Do not implement full multi-agent concurrency in the first milestone.
-4. Do not make MCP the internal runtime protocol. MCP can be added later as an external compatibility layer.
-5. Do not put raw API keys in renderer/UI state.
-6. Do not write back to `~/.codex/config.toml` by default.
+1. 不重建旧的 CLI 架构。
+2. 第一版不依赖 Claude Code、Codex CLI 或其他外部 CLI 作为核心执行引擎。
+3. 第一阶段不实现完整多智能体并发。
+4. 不把 MCP 当作内部 Runtime 协议。MCP 后续只作为外部兼容层。
+5. 不把原始 API key 放进渲染进程或 UI 状态。
+6. 默认不写回 `~/.codex/config.toml`。
 
-## Recommended Stack
+## 推荐技术栈
 
-- Desktop shell: Electron
-- UI: React, TypeScript, Vite
-- Runtime service: Node.js, TypeScript
-- Package management: pnpm workspaces
-- Shared contracts: TypeScript types plus Zod schemas
-- Local storage: SQLite through a mature Node package
-- Local control interface: HTTP API plus WebSocket event stream
-- Tests: Vitest for unit and integration tests, Playwright for desktop/UI flows
-- Packaging: Electron Forge, with build details kept replaceable if packaging constraints change
+- 桌面壳：Electron
+- UI：React、TypeScript、Vite
+- Runtime 服务：Node.js、TypeScript
+- 包管理：pnpm workspace
+- 共享契约：TypeScript 类型和 Zod schema
+- 本地存储：SQLite，使用成熟 Node 包
+- 本地控制接口：HTTP API 加 WebSocket 事件流
+- 测试：Vitest 做单元和集成测试，Playwright 做桌面/UI 流程测试
+- 打包：Electron Forge，具体打包方案保持可替换
 
-Electron is preferred for the first version because it keeps the UI, runtime, model adapters, local APIs, and testing stack in one TypeScript ecosystem. Tauri remains a possible later option, but Rust plus a Node sidecar would add too much early complexity for this project.
+第一版优先选择 Electron。它能让 UI、Runtime、模型适配器、本地 API 和测试都留在 TypeScript 生态里。Tauri 以后可以再评估，但 Rust 加 Node sidecar 会让早期复杂度偏高。
 
-## Architecture
+## 总体架构
 
-The product is split into four execution areas:
+产品分为四个执行区域：
 
 ```text
 Desktop UI <-> Electron Main <-> Runtime Daemon <-> Workers / Providers / Tools
@@ -62,62 +62,62 @@ External Software <-> Local HTTP API / WebSocket <-> Runtime Daemon
 
 ### Desktop Renderer
 
-The renderer owns user-facing interface only:
+Renderer 只负责用户界面：
 
-- chat/session views
-- model/profile switcher
-- agent status panels
-- task progress and event timeline
-- settings screens
-- permission and approval dialogs
+- 会话和工作区视图
+- 模型/profile 切换器
+- 智能体状态面板
+- 任务进度和事件时间线
+- 设置页
+- 权限和审批弹窗
 
-It must not call provider SDKs directly and must not receive raw secrets.
+Renderer 不直接调用模型 SDK，也不能接触原始密钥。
 
 ### Electron Main
 
-Electron main owns shell responsibilities:
+Electron Main 只负责桌面壳：
 
-- create windows
-- manage tray and app lifecycle
-- start or reconnect to the runtime daemon
-- handle deep links and app-level shortcuts
-- expose a narrow preload bridge
-- coordinate desktop notifications
+- 创建窗口
+- 管理托盘和应用生命周期
+- 启动或重连 Runtime Daemon
+- 处理深链和应用快捷键
+- 暴露窄范围 preload bridge
+- 协调桌面通知
 
-It should not contain agent orchestration or model-provider business logic.
+Main 进程不放智能体编排逻辑，也不放模型供应商业务逻辑。
 
 ### Runtime Daemon
 
-The daemon is the real core. It owns:
+Runtime Daemon 是真正核心。它负责：
 
-- config loading and validation
-- provider registry and model catalog
-- session, task, run, and agent lifecycle
-- model profile resolution
-- task scheduling
-- cancellation
-- local control API
-- WebSocket event stream
-- local storage
-- permission checks
-- audit events
+- 配置读取和校验
+- Provider 注册表和模型目录
+- Session、Task、Run、Agent 生命周期
+- 模型 profile 解析
+- 任务调度
+- 取消机制
+- 本地控制 API
+- WebSocket 事件流
+- 本地存储
+- 权限检查
+- 审计事件
 
-The first implementation can run the daemon as a child process launched by Electron. Later it can become a longer-lived background service.
+第一版可以由 Electron 启动一个 daemon 子进程。后续可以演进为更长期运行的后台服务。
 
 ### Workers
 
-Workers are introduced once long-running agent work or risky tools need isolation. They own:
+Worker 在长任务或高风险工具需要隔离时引入。它负责：
 
-- individual agent execution
-- long-running tool calls
-- cancellable model streams
-- per-task resource isolation
+- 单个智能体执行
+- 长时间工具调用
+- 可取消的模型流
+- 按任务隔离资源
 
-Workers are not required for the first scaffold, but the runtime interfaces should leave space for them.
+第一版不必须实现 Worker，但 Runtime 接口要给它预留空间。
 
-## Module Layout
+## 模块布局
 
-The first codebase should use a small monorepo:
+第一版代码使用小型 monorepo：
 
 ```text
 apps/
@@ -164,54 +164,54 @@ docs/
     plans/
 ```
 
-Responsibilities:
+模块职责：
 
-- `config`: read, merge, validate, and watch config files.
-- `providers`: adapt OpenAI, Anthropic, OpenRouter, Ollama, and OpenAI-compatible APIs.
-- `models`: maintain model descriptors, capabilities, and catalog policies.
-- `sessions`: manage conversation/work contexts.
-- `tasks`: manage queued, running, completed, failed, and cancelled work.
-- `agents`: manage agent instances and per-agent model bindings.
-- `workflows`: represent Superpowers-style workflows as data and state machines.
-- `tools`: register tools behind permissions and timeouts.
-- `permissions`: authenticate clients, check capabilities, and create approval requests.
-- `storage`: own SQLite migrations and repositories.
-- `events`: publish domain events to UI, logs, and WebSocket subscribers.
-- `control-api`: expose local HTTP and WebSocket endpoints.
+- `config`：读取、合并、校验、监听配置文件。
+- `providers`：适配 OpenAI、Anthropic、OpenRouter、Ollama 和 OpenAI-compatible API。
+- `models`：维护模型描述、能力标签和模型目录策略。
+- `sessions`：管理会话和工作上下文。
+- `tasks`：管理排队、运行、完成、失败、取消等任务状态。
+- `agents`：管理智能体实例和每个智能体的模型绑定。
+- `workflows`：把 Superpowers 流程表示成数据和状态机。
+- `tools`：在权限和超时约束下注册工具。
+- `permissions`：认证客户端、检查 capability、创建审批请求。
+- `storage`：管理 SQLite migration 和 repository。
+- `events`：向 UI、日志和 WebSocket 订阅者发布领域事件。
+- `control-api`：暴露本地 HTTP 和 WebSocket 端点。
 
-## Core Domain Model
+## 核心领域模型
 
 ### Session
 
-A `Session` is a work context.
+`Session` 表示一个工作上下文。
 
-Fields:
+字段：
 
 - `sessionId`
 - `title`
 - `workspaceId`
 - `createdBy`
 - `defaultModelProfileId`
-- `state`: `active | paused | archived | completed`
+- `state`：`active | paused | archived | completed`
 - `policyRef`
 - `metadata`
 - `createdAt`
 - `updatedAt`
 
-A session can contain multiple tasks and multiple agents.
+一个 Session 可以包含多个 Task 和多个 Agent。
 
 ### Task
 
-A `Task` is the scheduling unit.
+`Task` 是调度单位。
 
-Fields:
+字段：
 
 - `taskId`
 - `sessionId`
 - `parentTaskId`
-- `kind`: `chat | plan | execute | tool_call | review | background_job`
+- `kind`：`chat | plan | execute | tool_call | review | background_job`
 - `input`
-- `status`: `queued | running | waiting_approval | cancelling | cancelled | failed | completed`
+- `status`：`queued | running | waiting_approval | cancelling | cancelled | failed | completed`
 - `priority`
 - `requestedBy`
 - `assignedAgentId`
@@ -221,18 +221,18 @@ Fields:
 - `startedAt`
 - `endedAt`
 
-Tasks are cancellable, retryable, observable, and persisted.
+Task 必须可取消、可重试、可观察、可持久化。
 
 ### AgentInstance
 
-An `AgentInstance` is one active agent within a session.
+`AgentInstance` 表示 Session 中一个活跃智能体。
 
-Fields:
+字段：
 
 - `agentId`
 - `sessionId`
-- `role`: `primary | planner | coder | reviewer | tool_runner | observer`
-- `state`: `idle | running | waiting_input | blocked | cancelling | cancelled | failed`
+- `role`：`primary | planner | coder | reviewer | tool_runner | observer`
+- `state`：`idle | running | waiting_input | blocked | cancelling | cancelled | failed`
 - `modelProfileId`
 - `instructionProfileRef`
 - `capabilityProfileRef`
@@ -241,22 +241,22 @@ Fields:
 - `createdAt`
 - `lastHeartbeatAt`
 
-This object is the future foundation for multi-agent execution.
+这个对象是未来多智能体执行的基础。
 
 ### ModelBinding
 
-Model selection is layered, not global-only.
+模型选择不是全局唯一，而是分层绑定。
 
-Priority:
+优先级：
 
 ```text
 task > agent > session > global
 ```
 
-Fields:
+字段：
 
 - `bindingId`
-- `scopeType`: `global | session | agent | task`
+- `scopeType`：`global | session | agent | task`
 - `scopeId`
 - `providerId`
 - `model`
@@ -264,13 +264,13 @@ Fields:
 - `fallbackChain`
 - `reason`
 
-Changing a model in the UI affects new tasks. Running tasks keep the config snapshot they started with.
+用户在 UI 中切换模型时，只影响新任务。已经运行的任务继续使用启动时的配置快照。
 
 ### Event
 
-The runtime emits append-only domain events.
+Runtime 输出追加式领域事件。
 
-Important event types:
+关键事件类型：
 
 - `session.created`
 - `user.message_added`
@@ -295,19 +295,19 @@ Important event types:
 - `runtime.warning`
 - `runtime.error`
 
-The UI and external clients should rebuild visible state from snapshots plus events.
+UI 和外部客户端通过快照加事件重建可见状态。
 
-## Provider and Model Design
+## Provider 和模型设计
 
-The provider layer uses five core objects:
+Provider 层使用五个核心对象：
 
-- `ProviderKind`: `openai | anthropic | openrouter | ollama | openai-compatible`
-- `ProviderInstance`: named provider config with base URL, auth config, headers, and catalog policy
-- `ModelProfile`: user-facing profile such as `fast`, `deep`, or `local`
-- `AgentBinding`: mapping from agent role or agent id to model profile
-- `ProviderAdapter`: implementation that maps unified runtime requests to vendor-specific APIs
+- `ProviderKind`：`openai | anthropic | openrouter | ollama | openai-compatible`
+- `ProviderInstance`：一个具名 Provider 配置，包含 base URL、auth 配置、headers 和 catalog 策略
+- `ModelProfile`：面向用户的模型档位，例如 `fast`、`deep`、`local`
+- `AgentBinding`：从 agent role 或 agent id 到 model profile 的映射
+- `ProviderAdapter`：把 Runtime 统一请求转换为各供应商 API 请求
 
-Unified request fields:
+统一请求字段：
 
 - `messages`
 - `systemPrompt`
@@ -319,7 +319,7 @@ Unified request fields:
 - `reasoning`
 - `stream`
 
-Unified stream events:
+统一流事件：
 
 - `text-delta`
 - `tool-call`
@@ -327,7 +327,7 @@ Unified stream events:
 - `done`
 - `error`
 
-Model capabilities should be explicit:
+模型能力必须显式标记：
 
 - `supportsStreaming`
 - `supportsTools`
@@ -337,46 +337,46 @@ Model capabilities should be explicit:
 - `supportsSystemPrompt`
 - `supportsLocalExecution`
 
-OpenRouter should have its own provider kind even if it shares transport code with OpenAI-compatible APIs. Ollama should also have its own provider kind because local discovery, auth, and HTTP behavior differ from cloud providers.
+OpenRouter 单独作为一种 ProviderKind，即使它内部可以复用 OpenAI-compatible 传输代码。Ollama 也单独作为一种 ProviderKind，因为本地发现、鉴权和 HTTP 行为都不同于云端供应商。
 
-## Config and API Keys
+## 配置和 API Key
 
-Config format: TOML.
+配置格式使用 TOML。
 
-Config locations:
+配置文件位置：
 
 ```text
-User app config:
+用户应用配置：
 %USERPROFILE%\.claude-code-visualizer\config.toml
 
-User app secrets:
+用户应用密钥：
 %USERPROFILE%\.claude-code-visualizer\secrets.toml
 
-Codex compatibility read:
+Codex 兼容读取：
 %USERPROFILE%\.codex\config.toml
 
-Workspace shared config:
+工作区共享配置：
 <workspace>\.claude-code-visualizer.toml
 
-Workspace local override:
+工作区本地覆盖：
 <workspace>\.claude-code-visualizer.local.toml
 ```
 
-Merge priority:
+配置合并优先级：
 
 ```text
 runtime override > workspace local > workspace shared > user app config > Codex compatibility read > built-in defaults
 ```
 
-Merge rules:
+合并规则：
 
-- arrays replace as a whole
-- `auth` blocks replace as a whole
-- providers, profiles, and agents merge by key
-- profile inheritance is allowed
-- provider inheritance is not allowed in the first version
+- 数组整体替换。
+- `auth` 块整体替换。
+- providers、profiles、agents 按 key 合并。
+- 允许 profile 继承。
+- 第一版不允许 provider 继承。
 
-Example:
+示例：
 
 ```toml
 version = 1
@@ -435,7 +435,7 @@ profile = "fast"
 profile = "deep"
 ```
 
-Secret file example:
+密钥文件示例：
 
 ```toml
 [secrets]
@@ -443,31 +443,31 @@ anthropic_api_key = "..."
 company_llm_key = "..."
 ```
 
-Auth sources:
+支持的 auth source：
 
-- `runtime_secret`: entered in UI and kept only in memory
-- `secret_ref`: read from app secrets file
-- `env`: read from a named environment variable
-- `inline`: allowed only in user-level config
-- `none`: for local unauthenticated providers such as Ollama
+- `runtime_secret`：用户在 UI 中临时输入，只保存在内存。
+- `secret_ref`：从应用 secrets 文件读取。
+- `env`：从指定环境变量读取。
+- `inline`：只允许出现在用户级配置。
+- `none`：用于 Ollama 这类本地无鉴权 Provider。
 
-If a configured auth source fails, the runtime should report a clear error. It should not silently fall back to another secret source.
+如果配置指定的 auth source 读取失败，Runtime 必须给出明确错误。不要静默回退到其他密钥来源。
 
-Security boundaries:
+安全边界：
 
-- raw keys stay in the daemon process
-- renderer receives only redacted provider summaries
-- workspace shared config is treated as untrusted by default
-- custom remote base URLs must use HTTPS unless explicitly trusted as localhost or allowlisted
-- unknown hosts that would receive credentials require trust confirmation
-- logs, crash reports, and exported diagnostics must redact secrets
-- provider adapters receive resolved auth data, but they do not read env vars or files directly
+- 原始密钥只留在 daemon 进程。
+- Renderer 只能拿到脱敏后的 Provider 摘要。
+- 工作区共享配置默认不可信。
+- 自定义远程 base URL 默认必须使用 HTTPS；localhost 或明确白名单可以例外。
+- 未知 host 如果会接收凭证，必须先让用户确认信任。
+- 日志、崩溃报告、诊断导出必须脱敏。
+- ProviderAdapter 只能接收已解析的 auth 数据，不能直接读 env 或文件。
 
-## External Control Interface
+## 外部控制接口
 
-The runtime exposes a local API bound to `127.0.0.1`.
+Runtime 在 `127.0.0.1` 暴露本地 API。
 
-The first version should support:
+第一版支持：
 
 ```text
 POST /v1/sessions
@@ -498,16 +498,16 @@ POST /v1/approvals/:id/resolve
 GET  /v1/ws
 ```
 
-WebSocket subscriptions support filtering by:
+WebSocket 订阅支持按以下条件过滤：
 
 - `sessionId`
 - `taskId`
 - `agentId`
-- event type
+- 事件类型
 
-External control must require authentication. The desktop UI can use an internal trusted client token generated at runtime. Third-party software should use a pairing flow and receive scoped capability tokens.
+外部控制必须认证。桌面 UI 可以使用 Runtime 启动时生成的内部可信 token。第三方软件必须通过 pairing 流程获得带 scope 的 capability token。
 
-MCP should be added after the runtime API is stable. MCP tools can map onto runtime operations such as:
+MCP 等 Runtime API 稳定后再加。MCP tools 可以映射到这些 Runtime 操作：
 
 - `create_session`
 - `create_task`
@@ -518,17 +518,17 @@ MCP should be added after the runtime API is stable. MCP tools can map onto runt
 - `get_task_status`
 - `request_permission`
 
-## Permissions and Approvals
+## 权限和审批
 
-Permission principles:
+权限原则：
 
-- deny by default
-- least privilege
-- explicit user approval for high-risk actions
-- auditable decisions
-- revocable clients
+- 默认拒绝。
+- 最小权限。
+- 高风险动作需要用户明确批准。
+- 决策可审计。
+- 客户端授权可撤销。
 
-Capability examples:
+Capability 示例：
 
 - `session:read`
 - `session:write`
@@ -547,276 +547,276 @@ Capability examples:
 - `admin:settings`
 - `admin:providers`
 
-High-risk actions can produce approval requests:
+高风险动作会产生审批请求：
 
-- run shell commands
-- write outside the current workspace
-- send credentials to a newly configured host
-- switch an active session to a costly model
-- grant a third-party client new capabilities
+- 执行 shell 命令。
+- 写入当前工作区之外的文件。
+- 把凭证发送到新配置的 host。
+- 把活跃会话切换到高成本模型。
+- 给第三方客户端授予新 capability。
 
-Approval decisions:
+审批结果：
 
 - `allow_once`
 - `allow_for_session`
 - `allow_for_client`
 - `deny`
 
-## Multi-Agent Runtime
+## 多智能体 Runtime
 
-The first milestone only needs one active agent. The runtime must still model agents explicitly so later multi-agent execution does not require a rewrite.
+第一阶段只需要一个活跃智能体，但 Runtime 必须显式建模 Agent，避免后续多智能体实现时重写核心。
 
-Future multi-agent execution uses:
+未来多智能体执行使用：
 
-- task queue for scheduling
-- per-agent model profile binding
-- per-task config snapshot
-- cancellation token tree
-- event stream for observation
-- resource locks for shared artifacts and workspace paths
+- 任务队列负责调度。
+- 每个 Agent 绑定自己的 model profile。
+- 每个 Task 启动时拿配置快照。
+- Cancellation token 树负责取消。
+- Event stream 负责观察运行状态。
+- Resource lock 保护共享 artifact 和 workspace path。
 
-Cancellation levels:
+取消层级：
 
-- single provider stream
-- single tool call
-- single task
-- single agent
-- all tasks in a session
+- 单个 Provider 流。
+- 单个工具调用。
+- 单个 Task。
+- 单个 Agent。
+- 一个 Session 下的全部任务。
 
-Shared resource conflict strategies:
+共享资源冲突策略：
 
 - queue
 - reject
 - fork candidate output
 - ask user
 
-Default behavior:
+默认策略：
 
-- code and text artifacts prefer candidate/fork behavior
-- config and workspace mutations prefer queue or ask-user behavior
+- 代码和文本 artifact 优先生成候选或 fork。
+- 配置和工作区写入优先排队或询问用户。
 
-## UI Product Shape
+## UI 产品形态
 
-The first usable screen should be the application itself, not a marketing page.
+第一屏应该是可用的软件本体，不是营销页。
 
-Primary areas:
+主要区域：
 
-- session list
-- active conversation/work area
-- model/profile switcher
-- current agent status
-- task progress timeline
-- event/log drawer
-- settings and provider config
-- approval center
+- 会话列表
+- 当前对话/工作区域
+- 模型/profile 切换器
+- 当前智能体状态
+- 任务进度时间线
+- 事件/日志抽屉
+- 设置和 Provider 配置
+- 审批中心
 
-The model switcher should operate on profiles, not raw provider model names only. The UI can still expose provider and raw model details in settings.
+模型切换器应该操作 profile，而不是只暴露原始 Provider 模型名。设置页仍然可以展示 Provider 和原始模型细节。
 
-Agent status should make it clear which profile/model each agent is using.
+智能体状态需要清楚显示每个 Agent 正在使用哪个 profile/model。
 
-## Phase Plan
+## 阶段计划
 
-### Phase 0: Architecture Spec
+### Phase 0：架构规格
 
-Deliverables:
+交付物：
 
-- this design spec
-- implementation plan
-- initial architecture decision records if needed
+- 本设计规格。
+- 实施计划。
+- 必要的架构决策记录。
 
-No production code is required in this phase.
+本阶段不写生产代码。
 
-### Phase 1: Minimal Desktop Runtime
+### Phase 1：最小桌面 Runtime
 
-Deliverables:
+交付物：
 
-- pnpm workspace scaffold
-- Electron desktop app
-- daemon process launched by desktop app
-- shared schemas package
-- HTTP health endpoint
-- WebSocket event connection
-- simple renderer connected to daemon
-- config loader with TOML parsing
-- basic provider/profile schema validation
+- pnpm workspace 脚手架。
+- Electron 桌面应用。
+- 由桌面应用启动 daemon 进程。
+- shared schemas 包。
+- HTTP health endpoint。
+- WebSocket event connection。
+- 连接 daemon 的简单 renderer。
+- 支持 TOML 的 config loader。
+- 基础 Provider/Profile schema 校验。
 
-Success criteria:
+成功标准：
 
-- desktop app starts
-- daemon starts
-- UI can show daemon status
-- UI can list configured model profiles from config
-- tests cover config loading and health API
+- 桌面应用能启动。
+- daemon 能启动。
+- UI 能显示 daemon 状态。
+- UI 能列出配置中的 model profile。
+- 测试覆盖 config loading 和 health API。
 
-### Phase 2: Provider and Model Switching
+### Phase 2：Provider 和模型切换
 
-Deliverables:
+交付物：
 
-- provider adapter contract
-- OpenAI-compatible adapter
-- OpenAI provider instance support
-- OpenRouter provider instance support
-- Ollama provider instance support
-- model profile resolver
-- UI model/profile switcher
+- ProviderAdapter contract。
+- OpenAI-compatible adapter。
+- OpenAI provider instance。
+- OpenRouter provider instance。
+- Ollama provider instance。
+- ModelProfile resolver。
+- UI 模型/profile 切换器。
 
-Success criteria:
+成功标准：
 
-- user can switch profile in the UI
-- new tasks use the selected profile
-- running task config snapshots do not mutate when the user switches models
+- 用户能在 UI 中切换 profile。
+- 新任务使用被选中的 profile。
+- 运行中的任务不会因为用户切换模型而改变配置快照。
 
-### Phase 3: Sessions and Tasks
+### Phase 3：Session 和 Task
 
-Deliverables:
+交付物：
 
-- SQLite storage
-- session CRUD
-- task CRUD and status lifecycle
-- event persistence
-- basic chat task using one agent
-- task cancellation path
+- SQLite 存储。
+- Session CRUD。
+- Task CRUD 和状态生命周期。
+- Event 持久化。
+- 使用单 Agent 的基础 chat task。
+- Task cancellation path。
 
-Success criteria:
+成功标准：
 
-- session can be created from UI and API
-- task can stream output to UI
-- task can be cancelled
-- events are visible through WebSocket
+- UI 和 API 都能创建 Session。
+- Task 输出能流式显示到 UI。
+- Task 可以取消。
+- WebSocket 能看到事件。
 
-### Phase 4: External Control
+### Phase 4：外部控制
 
-Deliverables:
+交付物：
 
-- pairing flow
-- scoped local bearer tokens
-- client registry
-- permission checks
-- external task creation API
-- external event subscription
+- Pairing 流程。
+- 带 scope 的本地 bearer token。
+- Client registry。
+- Permission checks。
+- 外部 task creation API。
+- 外部 event subscription。
 
-Success criteria:
+成功标准：
 
-- a third-party local client can pair, create a task, observe events, and cancel the task
-- unpaired clients cannot control the runtime
+- 第三方本地客户端可以配对、创建任务、观察事件、取消任务。
+- 未配对客户端无法控制 Runtime。
 
-### Phase 5: Multi-Agent Foundation
+### Phase 5：多智能体基础
 
-Deliverables:
+交付物：
 
-- agent instance registry
-- per-agent model profile binding
-- planner/coder/reviewer roles
-- serial multi-agent workflow
-- Superpowers workflow pack representation
+- Agent instance registry。
+- 每个 Agent 的 model profile binding。
+- planner/coder/reviewer 角色。
+- 串行多智能体工作流。
+- Superpowers workflow pack 表示。
 
-Success criteria:
+成功标准：
 
-- a session can spawn multiple agents
-- each agent can use a different profile
-- workflow events show which agent did what
+- 一个 Session 可以创建多个 Agent。
+- 每个 Agent 可以使用不同 profile。
+- Workflow event 能显示哪个 Agent 做了什么。
 
-### Phase 6: Concurrent Agents and MCP
+### Phase 6：并发智能体和 MCP
 
-Deliverables:
+交付物：
 
-- concurrent task scheduler
-- worker isolation
-- resource locks
-- approval center
-- MCP server compatibility layer
+- 并发 task scheduler。
+- Worker isolation。
+- Resource locks。
+- Approval center。
+- MCP server compatibility layer。
 
-Success criteria:
+成功标准：
 
-- multiple agents can run concurrently without mixing model configs or event streams
-- MCP clients can call stable runtime operations
+- 多个 Agent 可以并发运行，不混用模型配置和事件流。
+- MCP client 可以调用稳定的 Runtime 操作。
 
-## Testing Strategy
+## 测试策略
 
-Config tests:
+配置测试：
 
-- parse valid TOML config
-- reject invalid provider types
-- merge config layers in the documented order
-- prevent workspace config from silently adding unsafe secrets
-- fail clearly when the selected auth source is missing
+- 解析合法 TOML 配置。
+- 拒绝非法 Provider type。
+- 按文档顺序合并配置层。
+- 阻止 workspace config 静默加入不安全密钥。
+- auth source 缺失时给出明确失败。
 
-Provider contract tests:
+Provider contract 测试：
 
-- map unified requests to provider-specific payloads
-- map provider streams to unified events
-- normalize provider errors
-- test `static`, `remote`, and `hybrid` model catalogs
+- 把统一请求映射为 Provider 专属 payload。
+- 把 Provider stream 映射为统一事件。
+- 归一化 Provider 错误。
+- 测试 `static`、`remote`、`hybrid` 模型目录。
 
-Runtime tests:
+Runtime 测试：
 
-- create session
-- create task
-- transition task statuses
-- cancel queued and running tasks
-- emit expected events
-- preserve config snapshots for running tasks
+- 创建 Session。
+- 创建 Task。
+- 转换 Task 状态。
+- 取消 queued 和 running Task。
+- 输出预期事件。
+- 保留运行中 Task 的配置快照。
 
-Security tests:
+安全测试：
 
-- renderer cannot access raw API keys
-- logs redact secrets
-- unknown credential hosts require trust
-- unpaired local clients are rejected
-- capability tokens cannot perform actions outside their scope
+- Renderer 不能访问原始 API key。
+- 日志会脱敏 secret。
+- 未知凭证 host 需要信任确认。
+- 未配对本地 client 被拒绝。
+- capability token 不能执行 scope 外动作。
 
-UI/E2E tests:
+UI/E2E 测试：
 
-- app launches
-- daemon connection status appears
-- profile list loads
-- model switch applies to the next task
-- task stream appears in the UI
-- cancellation updates task status
+- App 能启动。
+- daemon 连接状态能显示。
+- profile list 能加载。
+- 模型切换应用到下一个 Task。
+- Task stream 能显示在 UI。
+- 取消操作能更新 Task 状态。
 
-## Risks and Mitigations
+## 风险和缓解
 
-Risk: Electron main becomes a large business-logic container.
-Mitigation: keep orchestration in daemon modules and expose only narrow shell APIs from main.
+风险：Electron Main 变成业务大杂烩。  
+缓解：编排逻辑放在 daemon 模块中，Main 只暴露窄范围桌面壳 API。
 
-Risk: provider abstraction becomes too thin.
-Mitigation: define stable runtime request and event types, plus explicit model capabilities.
+风险：Provider 抽象太薄。  
+缓解：定义稳定 Runtime request 和 event 类型，并显式标记模型能力。
 
-Risk: provider abstraction becomes too thick and hides useful vendor capabilities.
-Mitigation: keep provider-specific metadata and capability flags available to policy and UI.
+风险：Provider 抽象太厚，隐藏供应商特有能力。  
+缓解：保留 Provider metadata 和 capability flags，供策略层和 UI 使用。
 
-Risk: local HTTP API becomes a security hole.
-Mitigation: bind to localhost, require pairing/token auth, use capability scopes, and audit high-risk operations.
+风险：本地 HTTP API 成为安全漏洞。  
+缓解：只绑定 localhost，要求 pairing/token auth，使用 capability scope，并审计高风险操作。
 
-Risk: config compatibility with Codex creates surprising behavior.
-Mitigation: read Codex config as compatibility input only, show config source in UI, and do not write to Codex config by default.
+风险：兼容 Codex 配置造成意外行为。  
+缓解：Codex 配置只作为兼容输入读取，在 UI 显示配置来源，默认不写回 Codex 配置。
 
-Risk: multi-agent concurrency creates state conflicts.
-Mitigation: model tasks, agents, events, cancellation, and resource locks from the beginning even if Phase 1 runs one agent.
+风险：多智能体并发导致状态冲突。  
+缓解：从第一版就建模 Task、Agent、Event、Cancellation 和 Resource Lock，即使 Phase 1 只跑一个 Agent。
 
-Risk: Superpowers workflows become hard-coded prompt strings.
-Mitigation: represent workflows as packs with steps, roles, required reviews, and approval points.
+风险：Superpowers workflow 被写死在 prompt 字符串里。  
+缓解：把 workflow 表示成 pack，包含步骤、角色、必需 review 和审批点。
 
-## Open Decisions
+## 待确认决策
 
-1. Exact product name and app config directory name.
-   Recommended default for now: `claude-code-visualizer` in code paths until the product name is renamed.
+1. 产品名和应用配置目录名。  
+   当前建议：代码路径先沿用 `claude-code-visualizer`，等产品名确定后再改。
 
-2. SQLite package.
-   Recommended default for now: choose a mature package during implementation planning after checking current compatibility with Electron and Node versions.
+2. SQLite 包选择。  
+   当前建议：实施计划阶段根据 Electron 和 Node 版本兼容性选择成熟包。
 
-3. First real cloud provider.
-   Recommended default for implementation: start with OpenAI-compatible transport, then add OpenAI and OpenRouter profiles on top.
+3. 第一个真实云端 Provider。  
+   当前建议：先实现 OpenAI-compatible 传输，再在其上补 OpenAI 和 OpenRouter profile。
 
-4. Whether daemon should remain alive after all windows close.
-   Recommended default for Phase 1: stop daemon with the app. Revisit in Phase 2 when tray/background mode exists.
+4. 关闭所有窗口后 daemon 是否继续运行。  
+   当前建议：Phase 1 随 App 关闭 daemon。Phase 2 做托盘/后台模式时再调整。
 
-## Approval Gate
+## 审阅门槛
 
-This spec is ready for user review. After approval, the next step is to write a detailed implementation plan at:
+这份规格等待用户审阅。确认后，下一步写详细实施计划：
 
 ```text
 docs/superpowers/plans/2026-05-09-runtime-first-desktop-agent.md
 ```
 
-Implementation should then use subagent-driven development with a fresh subagent per task and review checkpoints.
+实施阶段使用 subagent-driven development：每个任务派发新的子智能体，并设置规格符合性审查和代码质量审查。
