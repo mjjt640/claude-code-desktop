@@ -36,6 +36,12 @@ function createConfig(): LingshuConfig {
         auth: { source: "inline", value: "sk-secret" },
         catalog: { source: "static" }
       },
+      relay_main: {
+        type: "openai-compatible",
+        base_url: "https://relay.example.com/proxy/openai/v1",
+        auth: { source: "none" },
+        catalog: { source: "static" }
+      },
       ollama_local: {
         type: "ollama",
         base_url: "http://127.0.0.1:11434",
@@ -106,6 +112,140 @@ describe("ProviderRegistry", () => {
         max_tokens: 512,
         stream: true
       }
+    });
+  });
+
+  it("maps third-party relay OpenAI-compatible chat requests with opaque model IDs", () => {
+    const registry = createProviderRegistry(createConfig().providers);
+
+    const request = registry.getAdapter("relay_main").createChatCompletionRequest({
+      model: "vendor/model:beta",
+      messages: [{ role: "user", content: "Hello relay" }]
+    });
+
+    expect(request).toEqual({
+      method: "POST",
+      url: "https://relay.example.com/proxy/openai/v1/chat/completions",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: {
+        model: "vendor/model:beta",
+        messages: [{ role: "user", content: "Hello relay" }]
+      }
+    });
+  });
+
+  it("maps chat completion image parts to image_url content parts", () => {
+    const registry = createProviderRegistry(createConfig().providers);
+
+    const request = registry.getAdapter("relay_main").createChatCompletionRequest({
+      model: "vendor/model:beta",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image" },
+            { type: "image_url", imageUrl: "https://cdn.example.test/cat.png" }
+          ]
+        }
+      ]
+    });
+
+    expect(request.body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this image" },
+          {
+            type: "image_url",
+            image_url: {
+              url: "https://cdn.example.test/cat.png",
+              detail: "auto"
+            }
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("maps third-party relay OpenAI-compatible responses requests with opaque model IDs", () => {
+    const registry = createProviderRegistry(createConfig().providers);
+
+    const request = registry.getAdapter("relay_main").createResponsesRequest({
+      model: "vendor/model:beta",
+      messages: [{ role: "user", content: "Hello responses" }],
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      stream: true
+    });
+
+    expect(request).toEqual({
+      method: "POST",
+      url: "https://relay.example.com/proxy/openai/v1/responses",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: {
+        model: "vendor/model:beta",
+        input: [
+          {
+            role: "user",
+            content: [{ type: "input_text", text: "Hello responses" }]
+          }
+        ],
+        temperature: 0.4,
+        max_output_tokens: 2048,
+        stream: true
+      }
+    });
+  });
+
+  it("maps responses text and image input parts to input_text and input_image", () => {
+    const registry = createProviderRegistry(createConfig().providers);
+
+    const request = registry.getAdapter("relay_main").createResponsesRequest({
+      model: "vendor/model:beta",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Read this" },
+            {
+              type: "image_url",
+              imageUrl: "https://cdn.example.test/page.png",
+              detail: "high"
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(request.body.input).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "Read this" },
+          {
+            type: "input_image",
+            image_url: "https://cdn.example.test/page.png",
+            detail: "high"
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("omits Authorization placeholders for OpenAI-compatible responses requests that do not require auth", () => {
+    const registry = createProviderRegistry(createConfig().providers);
+
+    const request = registry.getAdapter("relay_main").createResponsesRequest({
+      model: "vendor/model:beta",
+      messages: [{ role: "user", content: "Hello" }]
+    });
+
+    expect(request.headers).toEqual({
+      "Content-Type": "application/json"
     });
   });
 
@@ -188,6 +328,26 @@ describe("ProviderRegistry", () => {
     );
   });
 
+  it("rejects unsafe OpenAI-compatible responses request preview base URLs without leaking secrets", () => {
+    const config = createConfig();
+    config.providers.unsafe = {
+      type: "openai-compatible",
+      base_url: "https://token-secret@example.com/v1?api_key=query-secret#hash-secret",
+      auth: { source: "none" },
+      catalog: { source: "static" }
+    };
+    const registry = createProviderRegistry(config.providers);
+
+    expectSafeUrlRejection(
+      () =>
+        registry.getAdapter("unsafe").createResponsesRequest({
+          model: "test-model",
+          messages: [{ role: "user", content: "Hello" }]
+        }),
+      ["token-secret", "query-secret", "hash-secret"]
+    );
+  });
+
   it("rejects unsafe Ollama request preview base URLs without leaking secrets", () => {
     const config = createConfig();
     config.providers.unsafe_ollama = {
@@ -257,6 +417,13 @@ describe("ProviderRegistry", () => {
         type: "openai-compatible",
         baseUrl: "https://llm.example.test/v1",
         auth: { source: "inline", status: "configured" },
+        catalog: { source: "static" }
+      },
+      {
+        id: "relay_main",
+        type: "openai-compatible",
+        baseUrl: "https://relay.example.com/proxy/openai/v1",
+        auth: { source: "none", status: "not_required" },
         catalog: { source: "static" }
       },
       {

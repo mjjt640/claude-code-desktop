@@ -8,9 +8,80 @@ import { openAiCompatibleModelCapabilities } from "../models/modelCapabilities.j
 import type {
   ProviderAdapter,
   ProviderRequestPreview,
+  UnifiedChatMessage,
   UnifiedChatCompletionInput
 } from "./providerAdapter.js";
 import { joinSafeProviderPath, summarizeProviderConfig } from "./providerAdapter.js";
+
+function createHeaders(config: ProviderConfig): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+
+  if (config.auth.source !== "none") {
+    headers.Authorization = "Bearer <redacted>";
+  }
+
+  return headers;
+}
+
+function mapChatContent(content: UnifiedChatMessage["content"]): string | Record<string, unknown>[] {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content.map((part) => {
+    if (part.type === "text") {
+      return {
+        type: "text",
+        text: part.text
+      };
+    }
+
+    return {
+      type: "image_url",
+      image_url: {
+        url: part.imageUrl,
+        detail: part.detail ?? "auto"
+      }
+    };
+  });
+}
+
+function mapResponsesContent(content: UnifiedChatMessage["content"]): Record<string, unknown>[] {
+  const parts = typeof content === "string"
+    ? [{ type: "text" as const, text: content }]
+    : content;
+
+  return parts.map((part) => {
+    if (part.type === "text") {
+      return {
+        type: "input_text",
+        text: part.text
+      };
+    }
+
+    return {
+      type: "input_image",
+      image_url: part.imageUrl,
+      detail: part.detail ?? "auto"
+    };
+  });
+}
+
+function mapChatMessages(messages: UnifiedChatMessage[]): Record<string, unknown>[] {
+  return messages.map((message) => ({
+    role: message.role,
+    content: mapChatContent(message.content)
+  }));
+}
+
+function mapResponsesInput(messages: UnifiedChatMessage[]): Record<string, unknown>[] {
+  return messages.map((message) => ({
+    role: message.role,
+    content: mapResponsesContent(message.content)
+  }));
+}
 
 export function createOpenAiCompatibleAdapter(
   kind: Extract<ProviderKind, "openai" | "openrouter" | "openai-compatible">,
@@ -25,17 +96,9 @@ export function createOpenAiCompatibleAdapter(
       return openAiCompatibleModelCapabilities;
     },
     createChatCompletionRequest(input: UnifiedChatCompletionInput): ProviderRequestPreview {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      };
-
-      if (config.auth.source !== "none") {
-        headers.Authorization = "Bearer <redacted>";
-      }
-
       const body: Record<string, unknown> = {
         model: input.model,
-        messages: input.messages
+        messages: mapChatMessages(input.messages)
       };
 
       if (input.temperature !== undefined) {
@@ -53,7 +116,32 @@ export function createOpenAiCompatibleAdapter(
       return {
         method: "POST",
         url: joinSafeProviderPath(config.base_url, "/chat/completions"),
-        headers,
+        headers: createHeaders(config),
+        body
+      };
+    },
+    createResponsesRequest(input: UnifiedChatCompletionInput): ProviderRequestPreview {
+      const body: Record<string, unknown> = {
+        model: input.model,
+        input: mapResponsesInput(input.messages)
+      };
+
+      if (input.temperature !== undefined) {
+        body.temperature = input.temperature;
+      }
+
+      if (input.maxOutputTokens !== undefined) {
+        body.max_output_tokens = input.maxOutputTokens;
+      }
+
+      if (input.stream !== undefined) {
+        body.stream = input.stream;
+      }
+
+      return {
+        method: "POST",
+        url: joinSafeProviderPath(config.base_url, "/responses"),
+        headers: createHeaders(config),
         body
       };
     }

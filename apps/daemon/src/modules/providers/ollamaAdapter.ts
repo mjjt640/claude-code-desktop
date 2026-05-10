@@ -49,6 +49,9 @@ export function createOllamaAdapter(config: ProviderConfig): ProviderAdapter {
         },
         body
       };
+    },
+    createResponsesRequest(): ProviderRequestPreview {
+      throw new Error('Provider "ollama" does not support Responses request previews');
     }
   };
 }

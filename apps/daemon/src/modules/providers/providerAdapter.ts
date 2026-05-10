@@ -12,9 +12,13 @@ import {
 
 export type UnifiedChatMessageRole = "system" | "user" | "assistant" | "tool";
 
+export type UnifiedContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; imageUrl: string; detail?: "low" | "high" | "auto" };
+
 export interface UnifiedChatMessage {
   role: UnifiedChatMessageRole;
-  content: string;
+  content: string | UnifiedContentPart[];
 }
 
 export interface UnifiedChatCompletionInput {
@@ -37,6 +41,7 @@ export interface ProviderAdapter {
   summarizeProvider(providerId: string, config: ProviderConfig): ProviderSummary;
   getDefaultCapabilities(): ModelCapabilities;
   createChatCompletionRequest(input: UnifiedChatCompletionInput): ProviderRequestPreview;
+  createResponsesRequest(input: UnifiedChatCompletionInput): ProviderRequestPreview;
 }
 
 export function getProviderAuthStatus(auth: AuthSource): ProviderSummary["auth"] {
