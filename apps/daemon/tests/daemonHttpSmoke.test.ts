@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import os from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -13,7 +15,8 @@ const daemonEntrypoint = resolve(repoRoot, "apps/daemon/src/index.ts");
 describe("daemon real HTTP startup", () => {
   it("serves health and model profiles over the daemon entrypoint", async () => {
     const port = await getAvailablePort();
-    const daemon = startDaemonProcess(port);
+    const configDirs = await createIsolatedConfigDirs();
+    const daemon = startDaemonProcess(port, configDirs);
 
     try {
       await waitForOutput(daemon, "lingshu-runtime listening", 10_000);
@@ -46,13 +49,29 @@ describe("daemon real HTTP startup", () => {
   }, 15_000);
 });
 
-function startDaemonProcess(port: number): ChildProcessWithoutNullStreams {
+async function createIsolatedConfigDirs(): Promise<{
+  homeDir: string;
+  workspaceDir: string;
+}> {
+  const testRoot = await mkdtemp(resolve(os.tmpdir(), "lingshu-daemon-smoke-"));
+
+  return {
+    homeDir: resolve(testRoot, "home"),
+    workspaceDir: resolve(testRoot, "workspace")
+  };
+}
+
+function startDaemonProcess(
+  port: number,
+  configDirs: { homeDir: string; workspaceDir: string }
+): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["--import", "tsx", daemonEntrypoint], {
     cwd: daemonRoot,
     env: {
       ...process.env,
       LINGSHU_RUNTIME_PORT: String(port),
-      LINGSHU_WORKSPACE_DIR: repoRoot,
+      LINGSHU_HOME_DIR: configDirs.homeDir,
+      LINGSHU_WORKSPACE_DIR: configDirs.workspaceDir,
       NO_COLOR: "1"
     },
     stdio: ["ignore", "pipe", "pipe"]

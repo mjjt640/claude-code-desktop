@@ -1,10 +1,27 @@
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDaemonApp } from "../src/bootstrap/createDaemonApp.js";
 
+async function createIsolatedConfigDirs(): Promise<{
+  homeDir: string;
+  workspaceDir: string;
+}> {
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), "lingshu-daemon-test-"));
+
+  return {
+    homeDir: path.join(testRoot, "home"),
+    workspaceDir: path.join(testRoot, "workspace")
+  };
+}
+
 describe("daemon HTTP routes", () => {
   it("returns health status", async () => {
+    const { homeDir, workspaceDir } = await createIsolatedConfigDirs();
     const app = await createDaemonApp({
-      workspaceDir: process.cwd(),
+      homeDir,
+      workspaceDir,
       startedAt: "2026-05-09T00:00:00.000Z"
     });
 
@@ -23,8 +40,10 @@ describe("daemon HTTP routes", () => {
   });
 
   it("returns configured model profiles", async () => {
+    const { homeDir, workspaceDir } = await createIsolatedConfigDirs();
     const app = await createDaemonApp({
-      workspaceDir: process.cwd(),
+      homeDir,
+      workspaceDir,
       startedAt: "2026-05-09T00:00:00.000Z"
     });
 
