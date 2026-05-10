@@ -1,8 +1,48 @@
 import { app, BrowserWindow } from "electron";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let daemonProcess: ChildProcessWithoutNullStreams | null = null;
+
+function startDaemon(): void {
+  if (daemonProcess) {
+    return;
+  }
+
+  const daemonEntry = path.resolve(__dirname, "../../../daemon/dist/index.js");
+  daemonProcess = spawn(process.execPath, [daemonEntry], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      LINGSHU_WORKSPACE_DIR: process.cwd(),
+      LINGSHU_RUNTIME_PORT: process.env.LINGSHU_RUNTIME_PORT ?? "4317"
+    },
+    stdio: "pipe"
+  });
+
+  daemonProcess.stdout.on("data", (chunk) => {
+    console.log(`[lingshu-runtime] ${String(chunk).trim()}`);
+  });
+
+  daemonProcess.stderr.on("data", (chunk) => {
+    console.error(`[lingshu-runtime] ${String(chunk).trim()}`);
+  });
+
+  daemonProcess.on("exit", () => {
+    daemonProcess = null;
+  });
+}
+
+function stopDaemon(): void {
+  if (!daemonProcess) {
+    return;
+  }
+
+  daemonProcess.kill("SIGTERM");
+  daemonProcess = null;
+}
 
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
@@ -29,8 +69,11 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  startDaemon();
   void createWindow();
 });
+
+app.on("before-quit", stopDaemon);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

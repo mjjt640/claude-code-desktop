@@ -8,6 +8,10 @@ const server = await startDaemonServer({
   host,
   port,
   workspaceDir
+}).catch((error: unknown) => {
+  console.error(`lingshu-runtime failed to listen on ${host}:${port}`);
+  console.error(error);
+  process.exit(1);
 });
 
 console.log(`lingshu-runtime listening on http://${host}:${port}`);

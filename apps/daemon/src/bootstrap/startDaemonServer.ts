@@ -20,6 +20,9 @@ export interface StartedDaemonServer {
 export async function startDaemonServer(options: StartDaemonServerOptions): Promise<StartedDaemonServer> {
   const app = await createDaemonApp(options);
   const socketServer = attachEventSocket(app.server, app.eventBus);
+  socketServer.on("error", () => {
+    // Fastify's listen promise reports the startup failure; this prevents ws from crashing first.
+  });
 
   await app.listen({
     host: options.host,
